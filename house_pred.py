@@ -145,17 +145,6 @@ lgb_model_full_data = lightgbm.fit(X_train, y)
 #lasso_preds = np.expm1(model_lasso.predict(X_test))
 
 
-#regressor = LinearRegression()
-
-#X_lr =  np.append(pd.DataFrame(np.expm1(model_xgb.predict(X_train))),pd.DataFrame(np.expm1(model_lasso.predict(X_train))),axis=1)
-#Y_lr = np.expm1(y)
-
-#print(X_lr,Y_lr)
-#regressor.fit(X_lr,Y_lr)
-#print(regressor.coef_)
-
-#preds = 0.7*lasso_preds + 0.3*xgb_preds
-#preds = -0.08*lasso_preds +1.09*xgb_preds
 preds = (0.1* elastic_model_full_data.predict(X_test)) + (0.1 * lasso_model_full_data.predict(X_test)) + 0.3*stack_gen_model.predict(np.array(X_test)) + (0.05 * ridge_model_full_data.predict(X_test)) +  (0.1 * svr_model_full_data.predict(X_test)) +  (0.1 * gbr_model_full_data.predict(X_test)) + (0.15 * xgb_preds) +   (0.1 * lgb_model_full_data.predict(X_test)) 
 
 preds = np.expm1(preds)
