@@ -18,6 +18,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy import stats
 from mlxtend.regressor import StackingCVRegressor
 
+from xgboost.sklearn import XGBRegressor
 from lightgbm import LGBMRegressor
 
 train = pd.read_csv("train.csv")
@@ -29,262 +30,326 @@ train["SalePrice"] = np.log1p(train["SalePrice"])
 train_ID = train['Id']
 test_ID = test['Id']
 
-train.drop("Id", axis = 1, inplace = True)
-test.drop("Id", axis = 1, inplace = True)
 
-ntrain = train.shape[0]
-ntest = test.shape[0]
-y_train = train.SalePrice.values
-all_data = pd.concat((train, test)).reset_index(drop=True)
-all_data.drop(['SalePrice'], axis=1, inplace=True)
-print("all_data size is : {}".format(all_data.shape))
+train = train[train.GrLivArea < 4500]
+train.reset_index(drop = True, inplace = True)
 
-all_data_na = (all_data.isnull().sum() / len(all_data)) * 100
-all_data_na = all_data_na.drop(all_data_na[all_data_na == 0].index).sort_values(ascending=False)[:30]
-missing_data = pd.DataFrame({'Missing Ratio' :all_data_na})
-missing_data.head(20)
+train.drop(columns=['Id'],axis=1, inplace=True)
+test.drop(columns=['Id'],axis=1, inplace=True)
 
-all_data["PoolQC"] = all_data["PoolQC"].fillna("None")
-all_data["MiscFeature"] = all_data["MiscFeature"].fillna("None")
-all_data["Alley"] = all_data["Alley"].fillna("None")
-all_data["Fence"] = all_data["Fence"].fillna("None")
-all_data["FireplaceQu"] = all_data["FireplaceQu"].fillna("None")
+## Saving the target values in "y_train". 
+y = train['SalePrice'].reset_index(drop=True)
 
-#Group by neighborhood and fill in missing value by the median LotFrontage of all the neighborhood
-all_data["LotFrontage"] = all_data.groupby("Neighborhood")["LotFrontage"].transform(
-    lambda x: x.fillna(x.median()))
+## save a copy of this dataset so that any changes later on can be compared side by side.
+previous_train = train.copy()
 
 
-for col in ('GarageType', 'GarageFinish', 'GarageQual', 'GarageCond'):
-    all_data[col] = all_data[col].fillna('None')
-
-for col in ('GarageYrBlt', 'GarageArea', 'GarageCars'):
-    all_data[col] = all_data[col].fillna(0)
-
-for col in ('BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF','TotalBsmtSF', 'BsmtFullBath', 'BsmtHalfBath'):
-    all_data[col] = all_data[col].fillna(0)
-
-for col in ('BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2'):
-    all_data[col] = all_data[col].fillna('None')  
 
 
-all_data["MasVnrType"] = all_data["MasVnrType"].fillna("None")
-all_data["MasVnrArea"] = all_data["MasVnrArea"].fillna(0)
-
-all_data['MSZoning'] = all_data['MSZoning'].fillna(all_data['MSZoning'].mode()[0])
-all_data = all_data.drop(['Utilities'], axis=1)
-
-all_data["Functional"] = all_data["Functional"].fillna("Typ")
-
-all_data['Electrical'] = all_data['Electrical'].fillna(all_data['Electrical'].mode()[0])
-
-all_data['KitchenQual'] = all_data['KitchenQual'].fillna(all_data['KitchenQual'].mode()[0])
-all_data['Exterior1st'] = all_data['Exterior1st'].fillna(all_data['Exterior1st'].mode()[0])
-all_data['Exterior2nd'] = all_data['Exterior2nd'].fillna(all_data['Exterior2nd'].mode()[0])
-
-all_data['SaleType'] = all_data['SaleType'].fillna(all_data['SaleType'].mode()[0])
-all_data['MSSubClass'] = all_data['MSSubClass'].fillna("None")
-
-#Check remaining missing values if any 
-all_data_na = (all_data.isnull().sum() / len(all_data)) * 100
-all_data_na = all_data_na.drop(all_data_na[all_data_na == 0].index).sort_values(ascending=False)
-missing_data = pd.DataFrame({'Missing Ratio' :all_data_na})
-
-all_data['MSSubClass'] = all_data['MSSubClass'].apply(str)
 
 
-#Changing OverallCond into a categorical variable
-all_data['OverallCond'] = all_data['OverallCond'].astype(str)
+all_data = pd.concat((train, test)).reset_index(drop = True)
+## Dropping the target variable. 
+all_data.drop(['SalePrice'], axis = 1, inplace = True)
 
 
-#Year and month sold are transformed into categorical features.
+
+missing_val_col2 = ['BsmtFinSF1',
+                    'BsmtFinSF2',
+                    'BsmtUnfSF',
+                    'TotalBsmtSF',
+                    'BsmtFullBath', 
+                    'BsmtHalfBath', 
+                    'GarageYrBlt',
+                    'GarageArea',
+                    'GarageCars',
+                    'MasVnrArea']
+
+for i in missing_val_col2:
+    all_data[i] = all_data[i].fillna(0)
+    
+## Replaced all missing values in LotFrontage by imputing the median value of each neighborhood. 
+all_data['LotFrontage'] = all_data.groupby('Neighborhood')['LotFrontage'].transform( lambda x: x.fillna(x.mean()))
+
+## the "OverallCond" and "OverallQual" of the house. 
+# all_data['OverallCond'] = all_data['OverallCond'].astype(str) 
+# all_data['OverallQual'] = all_data['OverallQual'].astype(str)
+
+## Zoning class are given in numerical; therefore converted to categorical variables. 
+all_data['MSSubClass'] = all_data['MSSubClass'].astype(str)
+all_data['MSZoning'] = all_data.groupby('MSSubClass')['MSZoning'].transform(lambda x: x.fillna(x.mode()[0]))
+
+## Important years and months that should be categorical variables not numerical. 
+# all_data['YearBuilt'] = all_data['YearBuilt'].astype(str)
+# all_data['YearRemodAdd'] = all_data['YearRemodAdd'].astype(str)
+# all_data['GarageYrBlt'] = all_data['GarageYrBlt'].astype(str)
 all_data['YrSold'] = all_data['YrSold'].astype(str)
-all_data['MoSold'] = all_data['MoSold'].astype(str)
+all_data['MoSold'] = all_data['MoSold'].astype(str) 
 
-from sklearn.preprocessing import LabelEncoder
-cols = ('FireplaceQu', 'BsmtQual', 'BsmtCond', 'GarageQual', 'GarageCond', 
-        'ExterQual', 'ExterCond','HeatingQC', 'PoolQC', 'KitchenQual', 'BsmtFinType1', 
-        'BsmtFinType2', 'Functional', 'Fence', 'BsmtExposure', 'GarageFinish', 'LandSlope',
-        'LotShape', 'PavedDrive', 'Street', 'Alley', 'CentralAir', 'MSSubClass', 'OverallCond', 
-        'YrSold', 'MoSold')
-# process columns, apply LabelEncoder to categorical features
-for c in cols:
-    lbl = LabelEncoder() 
-    lbl.fit(list(all_data[c].values)) 
-    all_data[c] = lbl.transform(list(all_data[c].values))
-
-# shape        
-print('Shape all_data: {}'.format(all_data.shape))
-all_data['TotalSF'] = all_data['TotalBsmtSF'] + all_data['1stFlrSF'] + all_data['2ndFlrSF']
+all_data['Functional'] = all_data['Functional'].fillna('Typ') 
+all_data['Utilities'] = all_data['Utilities'].fillna('AllPub') 
+all_data['Exterior1st'] = all_data['Exterior1st'].fillna(all_data['Exterior1st'].mode()[0]) 
+all_data['Exterior2nd'] = all_data['Exterior2nd'].fillna(all_data['Exterior2nd'].mode()[0])
+all_data['KitchenQual'] = all_data['KitchenQual'].fillna("TA") 
+all_data['SaleType'] = all_data['SaleType'].fillna(all_data['SaleType'].mode()[0])
+all_data['Electrical'] = all_data['Electrical'].fillna("SBrkr") 
 
 numeric_feats = all_data.dtypes[all_data.dtypes != "object"].index
 
-# Check the skew of all numerical features
-skewed_feats = all_data[numeric_feats].apply(lambda x: skew(x.dropna())).sort_values(ascending=False)
-print("\nSkew in numerical features: \n")
-skewness = pd.DataFrame({'Skew' :skewed_feats})
-skewness.head(10)
+skewed_feats = all_data[numeric_feats].apply(lambda x: skew(x)).sort_values(ascending=False)
 
-skewness = skewness[abs(skewness) > 0.75]
-print("There are {} skewed numerical features to Box Cox transform".format(skewness.shape[0]))
-
-from scipy.special import boxcox1p
-skewed_features = skewness.index
-lam = 0.15
-for feat in skewed_features:
-    #all_data[feat] += 1
-    all_data[feat] = boxcox1p(all_data[feat], lam)
-
-
-all_data = pd.get_dummies(all_data)
-print(all_data.shape)
-
-train = all_data[:ntrain]
-test = all_data[ntrain:]
-
-from sklearn.linear_model import ElasticNet, Lasso,  BayesianRidge, LassoLarsIC
-from sklearn.ensemble import RandomForestRegressor,  GradientBoostingRegressor
-from sklearn.kernel_ridge import KernelRidge
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import RobustScaler
-from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
-from sklearn.model_selection import KFold, cross_val_score, train_test_split
-from sklearn.metrics import mean_squared_error
-import xgboost as xgb
-import lightgbm as lgb
-
-#Validation function
-n_folds = 5
-
-def rmsle_cv(model):
-    kf = KFold(n_folds, shuffle=True, random_state=42).get_n_splits(train.values)
-    rmse= np.sqrt(-cross_val_score(model, train.values, y_train, scoring="neg_mean_squared_error", cv = kf))
-    return(rmse)
-
-
-lasso = make_pipeline(RobustScaler(), Lasso(alpha =0.0005, random_state=1))
-ENet = make_pipeline(RobustScaler(), ElasticNet(alpha=0.0005, l1_ratio=.9, random_state=3))
-KRR = KernelRidge(alpha=0.6, kernel='polynomial', degree=2, coef0=2.5)
-GBoost = GradientBoostingRegressor(n_estimators=3000, learning_rate=0.05,
-                                   max_depth=4, max_features='sqrt',
-                                   min_samples_leaf=15, min_samples_split=10, 
-                                   loss='huber', random_state =5)
-
-model_xgb = xgb.XGBRegressor(colsample_bytree=0.4603, gamma=0.0468, 
-                             learning_rate=0.05, max_depth=3, 
-                             min_child_weight=1.7817, n_estimators=2200,
-                             reg_alpha=0.4640, reg_lambda=0.8571,
-                             subsample=0.5213, silent=1,
-                             random_state =7, nthread = -1)
-
-
-
-model_lgb = lgb.LGBMRegressor(objective='regression',num_leaves=5,
-                              learning_rate=0.05, n_estimators=720,
-                              max_bin = 55, bagging_fraction = 0.8,
-                              bagging_freq = 5, feature_fraction = 0.2319,
-                              feature_fraction_seed=9, bagging_seed=9,
-                              min_data_in_leaf =6, min_sum_hessian_in_leaf = 11)
-
-
-
-score = rmsle_cv(lasso)
-print("\nLasso score: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
-
-
-class AveragingModels(BaseEstimator, RegressorMixin, TransformerMixin):
-    def __init__(self, models):
-        self.models = models
-        
-    # we define clones of the original models to fit the data in
-    def fit(self, X, y):
-        self.models_ = [clone(x) for x in self.models]
-        
-        # Train cloned base models
-        for model in self.models_:
-            model.fit(X, y)
-
-        return self
+def fixing_skewness(df):
+    """
+    This function takes in a dataframe and return fixed skewed dataframe
+    """
+    ## Import necessary modules 
+    from scipy.stats import skew
+    from scipy.special import boxcox1p
+    from scipy.stats import boxcox_normmax
     
-    #Now we do the predictions for cloned models and average them
-    def predict(self, X):
-        predictions = np.column_stack([
-            model.predict(X) for model in self.models_
-        ])
-        return np.mean(predictions, axis=1)   
+    ## Getting all the data that are not of "object" type. 
+    numeric_feats = df.dtypes[df.dtypes != "object"].index
 
-averaged_models = AveragingModels(models = (ENet, GBoost, KRR, lasso))
+    # Check the skew of all numerical features
+    skewed_feats = df[numeric_feats].apply(lambda x: skew(x)).sort_values(ascending=False)
+    high_skew = skewed_feats[abs(skewed_feats) > 0.5]
+    skewed_features = high_skew.index
 
-score = rmsle_cv(averaged_models)
-print(" Averaged base models score: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+    for feat in skewed_features:
+        df[feat] = boxcox1p(df[feat], boxcox_normmax(df[feat] + 1))
+
+fixing_skewness(all_data)
+
+all_data = all_data.drop(['Utilities', 'Street', 'PoolQC',], axis=1)
+
+# feture engineering a new feature "TotalFS"
+all_data['TotalSF'] = all_data['TotalBsmtSF'] + all_data['1stFlrSF'] + all_data['2ndFlrSF']
+all_data['YrBltAndRemod']=all_data['YearBuilt']+all_data['YearRemodAdd']
+
+all_data['Total_sqr_footage'] = (all_data['BsmtFinSF1'] + all_data['BsmtFinSF2'] +
+                                 all_data['1stFlrSF'] + all_data['2ndFlrSF'])
+
+all_data['Total_Bathrooms'] = (all_data['FullBath'] + (0.5 * all_data['HalfBath']) +
+                               all_data['BsmtFullBath'] + (0.5 * all_data['BsmtHalfBath']))
+
+all_data['Total_porch_sf'] = (all_data['OpenPorchSF'] + all_data['3SsnPorch'] +
+                              all_data['EnclosedPorch'] + all_data['ScreenPorch'] +
+                              all_data['WoodDeckSF'])
+
+all_data['haspool'] = all_data['PoolArea'].apply(lambda x: 1 if x > 0 else 0)
+all_data['has2ndfloor'] = all_data['2ndFlrSF'].apply(lambda x: 1 if x > 0 else 0)
+all_data['hasgarage'] = all_data['GarageArea'].apply(lambda x: 1 if x > 0 else 0)
+all_data['hasbsmt'] = all_data['TotalBsmtSF'].apply(lambda x: 1 if x > 0 else 0)
+all_data['hasfireplace'] = all_data['Fireplaces'].apply(lambda x: 1 if x > 0 else 0)
 
 
-class StackingAveragedModels(BaseEstimator, RegressorMixin, TransformerMixin):
-    def __init__(self, base_models, meta_model, n_folds=5):
-        self.base_models = base_models
-        self.meta_model = meta_model
-        self.n_folds = n_folds
-   
-    # We again fit the data on clones of the original models
-    def fit(self, X, y):
-        self.base_models_ = [list() for x in self.base_models]
-        self.meta_model_ = clone(self.meta_model)
-        kfold = KFold(n_splits=self.n_folds, shuffle=True, random_state=156)
-        
-        # Train cloned base models then create out-of-fold predictions
-        # that are needed to train the cloned meta-model
-        out_of_fold_predictions = np.zeros((X.shape[0], len(self.base_models)))
-        for i, model in enumerate(self.base_models):
-            for train_index, holdout_index in kfold.split(X, y):
-                instance = clone(model)
-                self.base_models_[i].append(instance)
-                instance.fit(X[train_index], y[train_index])
-                y_pred = instance.predict(X[holdout_index])
-                out_of_fold_predictions[holdout_index, i] = y_pred
-                
-        # Now train the cloned  meta-model using the out-of-fold predictions as new feature
-        self.meta_model_.fit(out_of_fold_predictions, y)
-        return self
-   
-    #Do the predictions of all base models on the test data and use the averaged predictions as 
-    #meta-features for the final prediction which is done by the meta-model
-    def predict(self, X):
-        meta_features = np.column_stack([
-            np.column_stack([model.predict(X) for model in base_models]).mean(axis=1)
-            for base_models in self.base_models_ ])
-        return self.meta_model_.predict(meta_features)
 
-stacked_averaged_models = StackingAveragedModels(base_models = (ENet, GBoost, KRR),
-                                                 meta_model = lasso)
+final_features = pd.get_dummies(all_data).reset_index(drop=True)
+final_features.shape
 
-score = rmsle_cv(stacked_averaged_models)
-print("Stacking Averaged models score: {:.4f} ({:.4f})".format(score.mean(), score.std()))
+X = final_features.iloc[:len(y), :]
 
+X_sub = final_features.iloc[len(y):, :]
+
+outliers = [30, 88, 462, 631, 1322]
+X = X.drop(X.index[outliers])
+y = y.drop(y.index[outliers])
+
+def overfit_reducer(df):
+    """
+    This function takes in a dataframe and returns a list of features that are overfitted.
+    """
+    overfit = []
+    for i in df.columns:
+        counts = df[i].value_counts()
+        zeros = counts.iloc[0]
+        if zeros / len(df) * 100 > 99.94:
+            overfit.append(i)
+    overfit = list(overfit)
+    return overfit
+
+
+overfitted_features = overfit_reducer(X)
+
+X = X.drop(overfitted_features, axis=1)
+X_sub = X_sub.drop(overfitted_features, axis=1)
+
+X.shape,y.shape, X_sub.shape
+
+## Train test s
+from sklearn.model_selection import train_test_split
+## Train test split follows this distinguished code pattern and helps creating train and test set to build machine learning. 
+X_train, X_test, y_train, y_test = train_test_split(X, y,test_size = .33, random_state = 0)
+
+X_train.shape, y_train.shape, X_test.shape, y_test.shape
+
+from sklearn.metrics import mean_squared_error
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+## Call in the LinearRegression object
+lin_reg = LinearRegression(normalize=True, n_jobs=-1)
+## fit train and test data. 
+lin_reg.fit(X_train, y_train)
+## Predict test data. 
+y_pred = lin_reg.predict(X_test)
+
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import StratifiedKFold, cross_val_score, KFold
+lin_reg = LinearRegression()
+cv = KFold(shuffle=True, random_state=2, n_splits=10)
+scores = cross_val_score(lin_reg, X,y,cv = cv, scoring = 'neg_mean_absolute_error')
+
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+## Assiging different sets of alpha values to explore which can be the best fit for the model. 
+alpha_ridge = [-3,-2,-1,1e-15, 1e-10, 1e-8,1e-5,1e-4, 1e-3,1e-2,0.5,1,1.5, 2,3,4, 5, 10, 20, 30, 40]
+temp_rss = {}
+temp_mse = {}
+for i in alpha_ridge:
+    ## Assigin each model. 
+    ridge = Ridge(alpha= i, normalize=True)
+    ## fit the model. 
+    ridge.fit(X_train, y_train)
+    ## Predicting the target value based on "Test_x"
+    y_pred = ridge.predict(X_test)
+
+    mse = mean_squared_error(y_test, y_pred)
+    rss = sum((y_pred-y_test)**2)
+    temp_mse[i] = mse
+    temp_rss[i] = rss
+
+
+from sklearn.linear_model import Lasso 
+temp_rss = {}
+temp_mse = {}
+for i in alpha_ridge:
+    ## Assigin each model. 
+    lasso_reg = Lasso(alpha= i, normalize=True)
+    ## fit the model. 
+    lasso_reg.fit(X_train, y_train)
+    ## Predicting the target value based on "Test_x"
+    y_pred = lasso_reg.predict(X_test)
+
+    mse = mean_squared_error(y_test, y_pred)
+    rss = sum((y_pred-y_test)**2)
+    temp_mse[i] = mse
+    temp_rss[i] = rss
+
+from sklearn.linear_model import ElasticNet
+temp_rss = {}
+temp_mse = {}
+for i in alpha_ridge:
+    ## Assigin each model. 
+    lasso_reg = ElasticNet(alpha= i, normalize=True)
+    ## fit the model. 
+    lasso_reg.fit(X_train, y_train)
+    ## Predicting the target value based on "Test_x"
+    y_pred = lasso_reg.predict(X_test)
+
+    mse = mean_squared_error(y_test, y_pred)
+    rss = sum((y_pred-y_test)**2)
+    temp_mse[i] = mse
+    temp_rss[i] = rss
+
+
+kfolds = KFold(n_splits=10, shuffle=True, random_state=42)
 
 def rmsle(y, y_pred):
     return np.sqrt(mean_squared_error(y, y_pred))
 
-
-stacked_averaged_models.fit(train.values, y_train)
-stacked_train_pred = stacked_averaged_models.predict(train.values)
-stacked_pred = np.expm1(stacked_averaged_models.predict(test.values))
-print(rmsle(y_train, stacked_train_pred))
-
-model_xgb.fit(train, y_train)
-xgb_train_pred = model_xgb.predict(train)
-xgb_pred = np.expm1(model_xgb.predict(test))
-print(rmsle(y_train, xgb_train_pred))
-
-model_lgb.fit(train, y_train)
-lgb_train_pred = model_lgb.predict(train)
-lgb_pred = np.expm1(model_lgb.predict(test.values))
-print(rmsle(y_train, lgb_train_pred))
-
-ensemble = stacked_pred*0.70 + xgb_pred*0.15 + lgb_pred*0.15
+def cv_rmse(model, X=X):
+    rmse = np.sqrt(-cross_val_score(model, X, y, scoring="neg_mean_squared_error", cv=kfolds))
+    return (rmse)
 
 
+alphas_alt = [14.5, 14.6, 14.7, 14.8, 14.9, 15, 15.1, 15.2, 15.3, 15.4, 15.5]
+alphas2 = [5e-05, 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.0008]
+e_alphas = [0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007]
+e_l1ratio = [0.8, 0.85, 0.9, 0.95, 0.99, 1]
 
-sub = pd.DataFrame()
-sub['Id'] = test_ID
-sub['SalePrice'] = ensemble
-sub.to_csv('submission.csv',index=False)
+
+ridge = make_pipeline(RobustScaler(), RidgeCV(alphas=alphas_alt, cv=kfolds))
+lasso = make_pipeline(RobustScaler(), LassoCV(max_iter=1e7, alphas=alphas2, random_state=42, cv=kfolds))
+elasticnet = make_pipeline(RobustScaler(), ElasticNetCV(max_iter=1e7, alphas=e_alphas, cv=kfolds, l1_ratio=e_l1ratio))                                
+svr = make_pipeline(RobustScaler(), SVR(C= 20, epsilon= 0.008, gamma=0.0003,))
+
+gbr = GradientBoostingRegressor(n_estimators=3000, learning_rate=0.05, max_depth=4, max_features='sqrt', min_samples_leaf=15, min_samples_split=10, loss='huber', random_state =42)                             
+
+lightgbm = LGBMRegressor(objective='regression', 
+                                       num_leaves=4,
+                                       learning_rate=0.01, 
+                                       n_estimators=5000,
+                                       max_bin=200, 
+                                       bagging_fraction=0.75,
+                                       bagging_freq=5, 
+                                       bagging_seed=7,
+                                       feature_fraction=0.2,
+                                       feature_fraction_seed=7,
+                                       verbose=-1,
+                                       )
+
+xgboost = XGBRegressor(learning_rate=0.01,n_estimators=3460,
+                                     max_depth=3, min_child_weight=0,
+                                     gamma=0, subsample=0.7,
+                                     colsample_bytree=0.7,
+                                     objective='reg:linear', nthread=-1,
+                                     scale_pos_weight=1, seed=27,
+                                     reg_alpha=0.00006)
+
+stack_gen = StackingCVRegressor(regressors=(ridge, lasso, elasticnet, xgboost, lightgbm),
+                                meta_regressor=xgboost,
+                                use_features_in_secondary=True)
+
+
+print('START Fit')
+
+print('stack_gen')
+stack_gen_model = stack_gen.fit(np.array(X), np.array(y))
+
+print('elasticnet')
+elastic_model_full_data = elasticnet.fit(X, y)
+
+print('Lasso')
+lasso_model_full_data = lasso.fit(X, y)
+
+print('Ridge') 
+ridge_model_full_data = ridge.fit(X, y)
+
+print('Svr')
+svr_model_full_data = svr.fit(X, y)
+
+# print('GradientBoosting')
+# gbr_model_full_data = gbr.fit(X, y)
+
+print('xgboost')
+xgb_model_full_data = xgboost.fit(X, y)
+
+print('lightgbm')
+lgb_model_full_data = lightgbm.fit(X, y)
+
+
+
+def blend_models_predict(X):
+    return ((0.1 * elastic_model_full_data.predict(X)) + \
+            (0.05 * lasso_model_full_data.predict(X)) + \
+            (0.2 * ridge_model_full_data.predict(X)) + \
+            (0.1 * svr_model_full_data.predict(X)) + \
+#             (0.1 * gbr_model_full_data.predict(X)) + \
+            (0.15 * xgb_model_full_data.predict(X)) + \
+            (0.1 * lgb_model_full_data.predict(X)) + \
+            (0.3 * stack_gen_model.predict(np.array(X))))
+
+print('RMSLE score on train data:')
+print(rmsle(y, blend_models_predict(X)))
+
+submission = pd.read_csv("sample_submission.csv")
+submission.iloc[:,1] = np.floor(np.expm1(blend_models_predict(X_sub)))	
+
+
+q1 = submission['SalePrice'].quantile(0.005)
+q2 = submission['SalePrice'].quantile(0.995)
+submission['SalePrice'] = submission['SalePrice'].apply(lambda x: x if x > q1 else x*0.77)
+submission['SalePrice'] = submission['SalePrice'].apply(lambda x: x if x < q2 else x*1.1)
+submission.to_csv("submission.csv", index=False)
